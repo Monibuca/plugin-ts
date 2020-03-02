@@ -21,6 +21,7 @@ type TS struct {
 	TSInfo
 	//TsChan     chan io.Reader
 	lastDts uint64
+	parent  Publisher
 }
 type TSInfo struct {
 	TotalPesCount int
@@ -164,8 +165,15 @@ func (ts *TS) run() {
 		}
 	}
 }
-
+func (ts *TS) OnClosed() {
+	if ts.parent != nil {
+		ts.parent.OnClosed()
+	}
+}
 func (ts *TS) Publish(streamPath string, publisher Publisher) (result bool) {
+	if publisher != ts {
+		ts.parent = publisher
+	}
 	if result = ts.InputStream.Publish(streamPath, publisher); result {
 		ts.TSInfo.RoomInfo = &ts.Room.RoomInfo
 		ts.MpegTsStream = mpegts.NewMpegTsStream(2048)
