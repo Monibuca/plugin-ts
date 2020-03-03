@@ -35,7 +35,7 @@ func init() {
 			if config.AutoPublish {
 				OnSubscribeHooks.AddHook(func(s *OutputStream) {
 					if s.Publisher == nil {
-						new(TS).PublishDir(s.StreamPath)
+						go new(TS).PublishDir(s.StreamPath)
 					}
 				})
 			}
