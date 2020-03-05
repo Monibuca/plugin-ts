@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"runtime"
 	"time"
 
 	. "github.com/Monibuca/engine"
@@ -24,12 +23,11 @@ var config = struct {
 }{2048, "ts", true}
 
 func init() {
-	_, currentFilePath, _, _ := runtime.Caller(0)
 	InstallPlugin(&PluginConfig{
 		Name:    "TS",
 		Type:    PLUGIN_PUBLISHER,
 		Version: "1.0.1",
-		UI:      filepath.Join(filepath.Dir(currentFilePath), "dashboard", "ui", "plugin-ts.min.js"),
+		UI:      util.CurrentDir("dashboard", "ui", "plugin-ts.min.js"),
 		Config:  &config,
 		Run: func() {
 			if config.AutoPublish {
