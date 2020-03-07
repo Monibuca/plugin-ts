@@ -163,7 +163,7 @@ func (ts *TS) run() {
 							if isFirst {
 								av.VideoFrameType = 2
 								util.BigEndian.PutUint24(pframeHead[2:], compostionTime)
-								_, err = r.Write(iframeHead)
+								_, err = r.Write(pframeHead)
 							} else {
 								ts.IsSplitFrame = true
 							}
