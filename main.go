@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	. "github.com/Monibuca/engine"
@@ -211,7 +212,7 @@ func (ts *TS) PublishDir(streamPath string) {
 	if err != nil || len(files) == 0 {
 		return
 	}
-	if ts.InputStream.Publish(streamPath, ts) {
+	if ts.InputStream.Publish(strings.ReplaceAll(streamPath, "\\", "/"), ts) {
 		ts.TSInfo.RoomInfo = &ts.Room.RoomInfo
 		ts.MpegTsStream = mpegts.NewMpegTsStream(0)
 		go ts.run()
