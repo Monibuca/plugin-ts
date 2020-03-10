@@ -184,7 +184,7 @@ func (ts *TS) run() {
 							//if ts.BufferLength > 50 {
 							duration = duration - t2
 							//}
-							if ts.BufferLength > 150 {
+							if ts.BufferLength > 300 {
 								duration = duration - duration*time.Duration(ts.BufferLength)/time.Duration(totalBuffer)
 							}
 							time.Sleep(duration)

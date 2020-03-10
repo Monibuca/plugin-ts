@@ -18,6 +18,8 @@
 </template>
 
 <script>
+
+
 export default {
     data() {
         return {
@@ -50,7 +52,7 @@ export default {
 </script>
 
 <style>
-@import url("/iview.css");
+/* @import url("/iview.css"); */
 .layout {
     padding-bottom: 30px;
     display: flex;
