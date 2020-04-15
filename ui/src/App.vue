@@ -1,12 +1,7 @@
 <template>
     <div class="layout">
-        <Badge
-            @click.native="publish(item)"
-            v-for="item in Rooms"
-            :key="item.StreamPath"
-            :count="item.TsCount"
-            class="room"
-        >
+        <Badge @click.native="publish(item)" v-for="item in Rooms" :key="item.StreamPath" :count="item.TsCount"
+            class="room">
             <Icon type="ios-folder-open-outline" size="100" />
             <div class="size">{{unitFormat(item.TotalSize)}}</div>
             <div>{{item.StreamPath}}</div>
@@ -18,8 +13,6 @@
 </template>
 
 <script>
-
-
 export default {
     data() {
         return {
@@ -28,22 +21,24 @@ export default {
     },
     methods: {
         fetchlist() {
-            window.ajax.getJSON("/ts/list").then(x => {
+            this.ajax.getJSON(this.apiHost + "/ts/list").then(x => {
                 this.Rooms = x;
             });
         },
         publish(item) {
-            this.$Modal.confirm({
-                title: "提示",
-                content: "是否发布该目录",
-                onOk() {
-                    window.ajax.getJSON(
-                        "/ts/publish?streamPath=" + item.StreamPath
-                    );
-                }
+            this.$confirm("是否发布该目录", "提示").then(result => {
+                if (result)
+                    this.ajax
+                        .getJSON(
+                            this.apiHost +
+                                "/ts/publish?streamPath=" +
+                                item.StreamPath
+                        )
+                        .then(() => {
+                            this.$toast.success("已发布" + item.StreamPath);
+                        });
             });
-        },
-        unitFormat: window.unitFormat
+        }
     },
     mounted() {
         this.fetchlist();
@@ -52,7 +47,6 @@ export default {
 </script>
 
 <style>
-/* @import url("/iview.css"); */
 .layout {
     padding-bottom: 30px;
     display: flex;
@@ -63,11 +57,12 @@ export default {
     text-align: center;
 }
 .room:hover {
-    border: 1px solid gray;
+    text-shadow: 0 0 12px #4199d0;
     border-radius: 10%;
     cursor: pointer;
 }
 .size {
+    color: #ffc107;
     position: absolute;
     top: 40%;
     left: 0;

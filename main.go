@@ -1,4 +1,4 @@
-package tsplugin
+package ts
 
 import (
 	"bytes"
@@ -25,11 +25,9 @@ var config = struct {
 
 func init() {
 	InstallPlugin(&PluginConfig{
-		Name:    "TS",
-		Type:    PLUGIN_PUBLISHER,
-		Version: "1.0.1",
-		UI:      util.CurrentDir("dashboard", "ui", "plugin-ts.min.js"),
-		Config:  &config,
+		Name:   "TS",
+		Type:   PLUGIN_PUBLISHER,
+		Config: &config,
 		Run: func() {
 			if config.AutoPublish {
 				OnSubscribeHooks.AddHook(func(s *OutputStream) {
@@ -256,6 +254,7 @@ func readTsDir(currentDir string) []*TSDir {
 	return list
 }
 func listTsDir(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
 	var list []*TSDir = readTsDir(".")
 	bytes, err := json.Marshal(list)
 	if err == nil {

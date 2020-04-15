@@ -1,5 +1,7 @@
-module github.com/Monibuca/tsplugin
+module github.com/Monibuca/plugin-ts
 
 go 1.13
 
-require github.com/Monibuca/engine v1.1.0
+require (
+	github.com/Monibuca/engine v1.2.1
+)
