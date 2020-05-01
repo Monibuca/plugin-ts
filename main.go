@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/Monibuca/engine"
-	"github.com/Monibuca/engine/avformat"
-	"github.com/Monibuca/engine/avformat/mpegts"
-	"github.com/Monibuca/engine/util"
+	. "github.com/Monibuca/engine/v2"
+	"github.com/Monibuca/engine/v2/avformat"
+	"github.com/Monibuca/engine/v2/avformat/mpegts"
+	"github.com/Monibuca/engine/v2/util"
 )
 
 var config = struct {
@@ -30,7 +30,7 @@ func init() {
 		Config: &config,
 		Run: func() {
 			if config.AutoPublish {
-				OnSubscribeHooks.AddHook(func(s *OutputStream) {
+				OnSubscribeHooks.AddHook(func(s *Subscriber) {
 					if s.Publisher == nil {
 						go new(TS).PublishDir(s.StreamPath)
 					}
@@ -48,7 +48,7 @@ type TSDir struct {
 	TotalSize  int64
 }
 type TS struct {
-	InputStream
+	Publisher
 	*mpegts.MpegTsStream
 	TSInfo
 	//TsChan     chan io.Reader
@@ -61,7 +61,7 @@ type TSInfo struct {
 	DTS           uint64
 	PesCount      int
 	BufferLength  int
-	RoomInfo      *RoomInfo
+	StreamInfo    *StreamInfo
 }
 
 func (ts *TS) run() {
@@ -91,16 +91,13 @@ func (ts *TS) run() {
 						if frameLen > remainLen {
 							break
 						}
-						av := avformat.NewAVPacket(avformat.FLV_TAG_TYPE_AUDIO)
-						av.Payload = data[:frameLen]
-						ts.PushAudio(av)
+						ts.PushAudio(uint32(tsPesPkt.PesPkt.Header.Pts/90), data[:frameLen])
 						data = data[frameLen:remainLen]
 						remainLen = remainLen - frameLen
 					}
 
 				case mpegts.STREAM_ID_VIDEO:
 					var err error
-					av := avformat.NewAVPacket(avformat.FLV_TAG_TYPE_VIDEO)
 					ts.PTS = tsPesPkt.PesPkt.Header.Pts
 					ts.DTS = tsPesPkt.PesPkt.Header.Dts
 					lastDts := ts.lastDts
@@ -109,7 +106,6 @@ func (ts *TS) run() {
 					if dts == 0 {
 						dts = pts
 					}
-					av.Timestamp = uint32(dts / 90)
 					if ts.lastDts == 0 {
 						ts.lastDts = dts
 					}
@@ -141,16 +137,11 @@ func (ts *TS) run() {
 							util.BigEndian.PutUint16(ppsHead[1:], uint16(vl))
 							_, err = r.Write(ppsHead)
 							_, err = r.Write(v)
-							av.VideoFrameType = 1
-							av.Payload = r.Bytes()
-							ts.PushVideo(av)
-							av = avformat.NewAVPacket(avformat.FLV_TAG_TYPE_VIDEO)
-							av.Timestamp = uint32(dts / 90)
+							ts.PushVideo(0, r.Bytes())
 							r = bytes.NewBuffer([]byte{})
 							continue
 						case avformat.NALU_IDR_Picture:
 							if isFirst {
-								av.VideoFrameType = 1
 								util.BigEndian.PutUint24(iframeHead[2:], compostionTime)
 								_, err = r.Write(iframeHead)
 							}
@@ -158,7 +149,6 @@ func (ts *TS) run() {
 							_, err = r.Write(nalLength)
 						case avformat.NALU_Non_IDR_Picture:
 							if isFirst {
-								av.VideoFrameType = 2
 								util.BigEndian.PutUint24(pframeHead[2:], compostionTime)
 								_, err = r.Write(pframeHead)
 							} else {
@@ -174,8 +164,7 @@ func (ts *TS) run() {
 					if MayBeError(err) {
 						return
 					}
-					av.Payload = r.Bytes()
-					ts.PushVideo(av)
+					ts.PushVideo(uint32(dts/90), r.Bytes())
 					t2 := time.Since(t1)
 					if duration != 0 && t2 < duration {
 						if duration < time.Second {
@@ -196,22 +185,24 @@ func (ts *TS) run() {
 		}
 	}
 }
-func (ts *TS) Publish(streamPath string, publisher Publisher) (result bool) {
-	if result = ts.InputStream.Publish(streamPath, publisher); result {
-		ts.TSInfo.RoomInfo = &ts.Room.RoomInfo
+func (ts *TS) Publish(streamPath string) (result bool) {
+	ts.Type = "TS"
+	if result = ts.Publisher.Publish(streamPath); result {
+		ts.TSInfo.StreamInfo = &ts.Stream.StreamInfo
 		ts.MpegTsStream = mpegts.NewMpegTsStream(config.BufferLength)
 		go ts.run()
 	}
 	return
 }
 func (ts *TS) PublishDir(streamPath string) {
+	ts.Type = "TSFiles"
 	dirPath := filepath.Join(config.Path, streamPath)
 	files, err := ioutil.ReadDir(dirPath)
 	if err != nil || len(files) == 0 {
 		return
 	}
-	if ts.InputStream.Publish(strings.ReplaceAll(streamPath, "\\", "/"), ts) {
-		ts.TSInfo.RoomInfo = &ts.Room.RoomInfo
+	if ts.Publisher.Publish(strings.ReplaceAll(streamPath, "\\", "/")) {
+		ts.TSInfo.StreamInfo = &ts.Stream.StreamInfo
 		ts.MpegTsStream = mpegts.NewMpegTsStream(0)
 		go ts.run()
 		for _, file := range files {
