@@ -28,14 +28,18 @@ func init() {
 		Name:   "TS",
 		Type:   PLUGIN_PUBLISHER,
 		Config: &config,
+		HotConfig: map[string]func(interface{}){
+			"AutoPublish": func(value interface{}) {
+				config.AutoPublish = value.(bool)
+			},
+		},
 		Run: func() {
-			if config.AutoPublish {
-				OnSubscribeHooks.AddHook(func(s *Subscriber) {
-					if s.Publisher == nil {
-						go new(TS).PublishDir(s.StreamPath)
-					}
-				})
-			}
+			OnSubscribeHooks.AddHook(func(s *Subscriber) {
+				if config.AutoPublish && s.Publisher == nil {
+					go new(TS).PublishDir(s.StreamPath)
+				}
+			})
+
 			http.HandleFunc("/ts/list", listTsDir)
 			http.HandleFunc("/ts/publish", publishTsDir)
 		},
@@ -186,8 +190,8 @@ func (ts *TS) run() {
 	}
 }
 func (ts *TS) Publish(streamPath string) (result bool) {
-	ts.Type = "TS"
 	if result = ts.Publisher.Publish(streamPath); result {
+		ts.Type = "TS"
 		ts.TSInfo.StreamInfo = &ts.Stream.StreamInfo
 		ts.MpegTsStream = mpegts.NewMpegTsStream(config.BufferLength)
 		go ts.run()
@@ -195,13 +199,13 @@ func (ts *TS) Publish(streamPath string) (result bool) {
 	return
 }
 func (ts *TS) PublishDir(streamPath string) {
-	ts.Type = "TSFiles"
 	dirPath := filepath.Join(config.Path, streamPath)
 	files, err := ioutil.ReadDir(dirPath)
 	if err != nil || len(files) == 0 {
 		return
 	}
 	if ts.Publisher.Publish(strings.ReplaceAll(streamPath, "\\", "/")) {
+		ts.Type = "TSFiles"
 		ts.TSInfo.StreamInfo = &ts.Stream.StreamInfo
 		ts.MpegTsStream = mpegts.NewMpegTsStream(0)
 		go ts.run()

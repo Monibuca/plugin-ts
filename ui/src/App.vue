@@ -1,12 +1,12 @@
 <template>
     <div class="layout">
-        <Badge @click.native="publish(item)" v-for="item in Rooms" :key="item.StreamPath" :count="item.TsCount"
+        <Badge @click.native="publish(item)" v-for="item in Streams" :key="item.StreamPath" :count="item.TsCount"
             class="room">
             <Icon type="ios-folder-open-outline" size="100" />
             <div class="size">{{unitFormat(item.TotalSize)}}</div>
             <div>{{item.StreamPath}}</div>
         </Badge>
-        <div v-if="Rooms.length==0" class="empty">
+        <div v-if="Streams.length==0" class="empty">
             <Icon type="md-wine" size="50" />没有任何文件夹
         </div>
     </div>
@@ -16,17 +16,17 @@
 export default {
     data() {
         return {
-            Rooms: []
+            Streams: []
         };
     },
     methods: {
         fetchlist() {
             this.ajax.getJSON(this.apiHost + "/ts/list").then(x => {
-                this.Rooms = x;
+                this.Streams = x;
             });
         },
         publish(item) {
-            this.$confirm("是否发布该目录", "提示").then(result => {
+            this.$confirm("是否发布该目录", "提示").then(({result}) => {
                 if (result)
                     this.ajax
                         .getJSON(
@@ -46,7 +46,7 @@ export default {
 };
 </script>
 
-<style>
+<style scoped>
 .layout {
     padding-bottom: 30px;
     display: flex;
