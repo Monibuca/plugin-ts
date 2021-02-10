@@ -76,7 +76,9 @@ func (ts *TS) run() {
 	spsHead := []byte{0xE1, 0, 0}
 	ppsHead := []byte{0x01, 0, 0}
 	nalLength := []byte{0, 0, 0, 0}
-	defer ts.AVRing.Done()
+	defer func(){
+		ts.AVRing.Done()
+	}()
 	for {
 		select {
 		case <-ts.Done():
