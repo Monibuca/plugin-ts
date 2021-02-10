@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/Monibuca/engine/v2"
-	"github.com/Monibuca/engine/v2/avformat"
-	"github.com/Monibuca/engine/v2/avformat/mpegts"
-	"github.com/Monibuca/engine/v2/util"
+	. "github.com/Monibuca/engine/v3"
+	"github.com/Monibuca/utils/v3"
+	"github.com/Monibuca/utils/v3/codec"
+	"github.com/Monibuca/utils/v3/codec/mpegts"
 )
 
 var config = struct {
@@ -26,7 +26,6 @@ var config = struct {
 func init() {
 	InstallPlugin(&PluginConfig{
 		Name:   "TS",
-		Type:   PLUGIN_PUBLISHER,
 		Config: &config,
 		HotConfig: map[string]func(interface{}){
 			"AutoPublish": func(value interface{}) {
@@ -34,14 +33,16 @@ func init() {
 			},
 		},
 		Run: func() {
-			OnSubscribeHooks.AddHook(func(s *Subscriber) {
+			http.HandleFunc("/ts/list", listTsDir)
+			http.HandleFunc("/ts/publish", publishTsDir)
+			onSubscribe := make(chan interface{}, 0)
+			AddHook(HOOK_SUBSCRIBE, onSubscribe)
+			for x := range onSubscribe {
+				s := x.(*Subscriber)
 				if config.AutoPublish && s.Publisher == nil {
 					go new(TS).PublishDir(s.StreamPath)
 				}
-			})
-
-			http.HandleFunc("/ts/list", listTsDir)
-			http.HandleFunc("/ts/publish", publishTsDir)
+			}
 		},
 	})
 }
@@ -53,32 +54,20 @@ type TSDir struct {
 }
 type TS struct {
 	Publisher
-	*mpegts.MpegTsStream
-	TSInfo
-	//TsChan     chan io.Reader
-	lastDts uint64
-}
-type TSInfo struct {
-	TotalPesCount int
-	IsSplitFrame  bool
-	PTS           uint64
-	DTS           uint64
-	PesCount      int
-	BufferLength  int
-	StreamInfo    *StreamInfo
+	*mpegts.MpegTsStream `json:"-"`
+	TotalPesCount        int
+	IsSplitFrame         bool
+	PTS                  uint64
+	DTS                  uint64
+	PesCount             int
+	BufferLength         int //TsChan     chan io.Reader
+	lastDts              uint64
 }
 
 func (ts *TS) run() {
 	//defer close(ts.TsChan)
 	totalBuffer := cap(ts.TsPesPktChan)
-	iframeHead := []byte{0x17, 0x01, 0, 0, 0}
-	pframeHead := []byte{0x27, 0x01, 0, 0, 0}
-	spsHead := []byte{0xE1, 0, 0}
-	ppsHead := []byte{0x01, 0, 0}
-	nalLength := []byte{0, 0, 0, 0}
-	defer func(){
-		ts.AVRing.Done()
-	}()
+	defer ts.Dispose()
 	for {
 		select {
 		case <-ts.Done():
@@ -97,7 +86,22 @@ func (ts *TS) run() {
 						if frameLen > remainLen {
 							break
 						}
-						ts.PushAudio(uint32(tsPesPkt.PesPkt.Header.Pts/90), data[:frameLen])
+						payload := data[:frameLen]
+						if ts.AudioTracks[0].RtmpTag == nil {
+							if payload[0] == 0xFF && (payload[1]&0xF0) == 0xF0 {
+								//将ADTS转换成ASC
+								ts.AudioTracks[0].SoundFormat = 10
+								ts.AudioTracks[0].SoundRate = codec.SamplingFrequencies[(payload[2]&0x3c)>>2]
+								ts.AudioTracks[0].SoundType = ((payload[2] & 0x1) << 2) | ((payload[3] & 0xc0) >> 6)
+								ts.AudioTracks[0].RtmpTag = codec.ADTSToAudioSpecificConfig(payload)
+								ts.AudioTracks[0].Push(uint32(tsPesPkt.PesPkt.Header.Pts/90), payload[7:])
+							} else {
+								ts.AudioTracks[0].SoundFormat = 2
+								ts.AudioTracks[0].Push(uint32(tsPesPkt.PesPkt.Header.Pts/90), payload)
+							}
+						} else if ts.AudioTracks[0].SoundFormat == 10 {
+							ts.AudioTracks[0].Push(uint32(tsPesPkt.PesPkt.Header.Pts/90), payload[7:])
+						}
 						data = data[frameLen:remainLen]
 						remainLen = remainLen - frameLen
 					}
@@ -115,62 +119,28 @@ func (ts *TS) run() {
 					if ts.lastDts == 0 {
 						ts.lastDts = dts
 					}
-					compostionTime := uint32((pts - dts) / 90)
+					//	compostionTime := uint32((pts - dts) / 90)
 					t1 := time.Now()
 					duration := time.Millisecond * time.Duration((dts-ts.lastDts)/90)
 					ts.lastDts = dts
-					nalus0 := bytes.SplitN(tsPesPkt.PesPkt.Payload, avformat.NALU_Delimiter2, -1)
+					nalus0 := bytes.SplitN(tsPesPkt.PesPkt.Payload, codec.NALU_Delimiter2, -1)
 					nalus := make([][]byte, 0)
 					for _, v := range nalus0 {
 						if len(v) == 0 {
 							continue
 						}
-						nalus = append(nalus, bytes.SplitN(v, avformat.NALU_Delimiter1, -1)...)
+						nalus = append(nalus, bytes.SplitN(v, codec.NALU_Delimiter1, -1)...)
 					}
-					r := bytes.NewBuffer([]byte{})
 					for _, v := range nalus {
 						vl := len(v)
 						if vl == 0 {
 							continue
 						}
-						isFirst := v[1]&0x80 == 0x80 //第一个分片
-						switch v[0] & 0x1f {
-						case avformat.NALU_SPS:
-							r.Write(avformat.RTMP_AVC_HEAD)
-							util.BigEndian.PutUint16(spsHead[1:], uint16(vl))
-							_, err = r.Write(spsHead)
-						case avformat.NALU_PPS:
-							util.BigEndian.PutUint16(ppsHead[1:], uint16(vl))
-							_, err = r.Write(ppsHead)
-							_, err = r.Write(v)
-							ts.PushVideo(0, r.Bytes())
-							r = bytes.NewBuffer([]byte{})
-							continue
-						case avformat.NALU_IDR_Picture:
-							if isFirst {
-								util.BigEndian.PutUint24(iframeHead[2:], compostionTime)
-								_, err = r.Write(iframeHead)
-							}
-							util.BigEndian.PutUint32(nalLength, uint32(vl))
-							_, err = r.Write(nalLength)
-						case avformat.NALU_Non_IDR_Picture:
-							if isFirst {
-								util.BigEndian.PutUint24(pframeHead[2:], compostionTime)
-								_, err = r.Write(pframeHead)
-							} else {
-								ts.IsSplitFrame = true
-							}
-							util.BigEndian.PutUint32(nalLength, uint32(vl))
-							_, err = r.Write(nalLength)
-						default:
-							continue
-						}
-						_, err = r.Write(v)
+						ts.PushVideo(uint32(dts/90), v)
 					}
-					if MayBeError(err) {
+					if utils.MayBeError(err) {
 						return
 					}
-					ts.PushVideo(uint32(dts/90), r.Bytes())
 					t2 := time.Since(t1)
 					if duration != 0 && t2 < duration {
 						if duration < time.Second {
@@ -194,7 +164,6 @@ func (ts *TS) run() {
 func (ts *TS) Publish(streamPath string) (result bool) {
 	if result = ts.Publisher.Publish(streamPath); result {
 		ts.Type = "TS"
-		ts.TSInfo.StreamInfo = &ts.Stream.StreamInfo
 		ts.MpegTsStream = mpegts.NewMpegTsStream(config.BufferLength)
 		go ts.run()
 	}
@@ -208,7 +177,6 @@ func (ts *TS) PublishDir(streamPath string) {
 	}
 	if ts.Publisher.Publish(strings.ReplaceAll(streamPath, "\\", "/")) {
 		ts.Type = "TSFiles"
-		ts.TSInfo.StreamInfo = &ts.Stream.StreamInfo
 		ts.MpegTsStream = mpegts.NewMpegTsStream(0)
 		go ts.run()
 		for _, file := range files {
