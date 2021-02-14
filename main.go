@@ -67,6 +67,8 @@ type TS struct {
 func (ts *TS) run() {
 	//defer close(ts.TsChan)
 	totalBuffer := cap(ts.TsPesPktChan)
+	var at *AudioTrack
+	vt := NewVideoTrack()
 	defer ts.Dispose()
 	for {
 		select {
@@ -87,20 +89,25 @@ func (ts *TS) run() {
 							break
 						}
 						payload := data[:frameLen]
-						if ts.AudioTracks[0].RtmpTag == nil {
+						if at == nil {
 							if payload[0] == 0xFF && (payload[1]&0xF0) == 0xF0 {
+								at = NewAudioTrack()
 								//将ADTS转换成ASC
-								ts.AudioTracks[0].SoundFormat = 10
-								ts.AudioTracks[0].SoundRate = codec.SamplingFrequencies[(payload[2]&0x3c)>>2]
-								ts.AudioTracks[0].SoundType = ((payload[2] & 0x1) << 2) | ((payload[3] & 0xc0) >> 6)
-								ts.AudioTracks[0].RtmpTag = codec.ADTSToAudioSpecificConfig(payload)
-								ts.AudioTracks[0].Push(uint32(tsPesPkt.PesPkt.Header.Pts/90), payload[7:])
+								at.SoundFormat = 10
+								at.SoundRate = codec.SamplingFrequencies[(payload[2]&0x3c)>>2]
+								at.SoundType = ((payload[2] & 0x1) << 2) | ((payload[3] & 0xc0) >> 6)
+								at.RtmpTag = codec.ADTSToAudioSpecificConfig(payload)
+								at.Push(uint32(tsPesPkt.PesPkt.Header.Pts/90), payload[7:])
+								ts.OriginAudioTrack = at
+								ts.AddAudioTrack("aac", at)
 							} else {
-								ts.AudioTracks[0].SoundFormat = 2
-								ts.AudioTracks[0].Push(uint32(tsPesPkt.PesPkt.Header.Pts/90), payload)
+								utils.Println("audio codec not support yet,want aac")
+								return
+								// ts.AudioTracks[0].SoundFormat = 2
+								// ts.AudioTracks[0].Push(uint32(tsPesPkt.PesPkt.Header.Pts/90), payload)
 							}
-						} else if ts.AudioTracks[0].SoundFormat == 10 {
-							ts.AudioTracks[0].Push(uint32(tsPesPkt.PesPkt.Header.Pts/90), payload[7:])
+						} else {
+							at.Push(uint32(tsPesPkt.PesPkt.Header.Pts/90), payload[7:])
 						}
 						data = data[frameLen:remainLen]
 						remainLen = remainLen - frameLen
@@ -136,7 +143,12 @@ func (ts *TS) run() {
 						if vl == 0 {
 							continue
 						}
-						ts.PushVideo(uint32(dts/90), v)
+						vt.Push(uint32(dts/90), v)
+					}
+					if vt.RtmpTag != nil && ts.OriginVideoTrack == nil {
+						vt.CodecID = 7
+						ts.OriginVideoTrack = vt
+						ts.AddVideoTrack("h264", vt)
 					}
 					if utils.MayBeError(err) {
 						return
