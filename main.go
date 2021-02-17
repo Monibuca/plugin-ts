@@ -35,14 +35,12 @@ func init() {
 		Run: func() {
 			http.HandleFunc("/ts/list", listTsDir)
 			http.HandleFunc("/ts/publish", publishTsDir)
-			onSubscribe := make(chan interface{}, 0)
-			AddHook(HOOK_SUBSCRIBE, onSubscribe)
-			for x := range onSubscribe {
+			AddHook(HOOK_SUBSCRIBE, func(x interface{}) {
 				s := x.(*Subscriber)
 				if config.AutoPublish && s.Publisher == nil {
-					go new(TS).PublishDir(s.StreamPath)
+					new(TS).PublishDir(s.StreamPath)
 				}
-			}
+			})
 		},
 	})
 }
@@ -69,10 +67,16 @@ func (ts *TS) run() {
 	totalBuffer := cap(ts.TsPesPktChan)
 	var at *AudioTrack
 	vt := NewVideoTrack()
-	defer ts.Dispose()
+	needClose := true
+	defer func() {
+		if needClose {
+			ts.Close()
+		}
+	}()
 	for {
 		select {
 		case <-ts.Done():
+			needClose = false
 			return
 		case tsPesPkt, ok := <-ts.TsPesPktChan:
 			ts.BufferLength = len(ts.TsPesPktChan)
@@ -98,8 +102,7 @@ func (ts *TS) run() {
 								at.SoundType = ((payload[2] & 0x1) << 2) | ((payload[3] & 0xc0) >> 6)
 								at.RtmpTag = codec.ADTSToAudioSpecificConfig(payload)
 								at.Push(uint32(tsPesPkt.PesPkt.Header.Pts/90), payload[7:])
-								ts.OriginAudioTrack = at
-								ts.AddAudioTrack("aac", at)
+								ts.SetOriginAT(at)
 							} else {
 								utils.Println("audio codec not support yet,want aac")
 								return
@@ -147,8 +150,7 @@ func (ts *TS) run() {
 					}
 					if vt.RtmpTag != nil && ts.OriginVideoTrack == nil {
 						vt.CodecID = 7
-						ts.OriginVideoTrack = vt
-						ts.AddVideoTrack("h264", vt)
+						ts.SetOriginVT(vt)
 					}
 					if utils.MayBeError(err) {
 						return
