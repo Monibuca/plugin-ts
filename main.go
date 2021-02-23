@@ -101,7 +101,7 @@ func (ts *TS) run() {
 								at.SoundRate = codec.SamplingFrequencies[(payload[2]&0x3c)>>2]
 								at.SoundType = ((payload[2] & 0x1) << 2) | ((payload[3] & 0xc0) >> 6)
 								at.RtmpTag = codec.ADTSToAudioSpecificConfig(payload)
-								at.Push(uint32(tsPesPkt.PesPkt.Header.Pts/90), payload[7:])
+								at.Push(uint32(tsPesPkt.PesPkt.Header.Dts/90), payload[7:])
 								ts.SetOriginAT(at)
 							} else {
 								utils.Println("audio codec not support yet,want aac")
@@ -110,7 +110,7 @@ func (ts *TS) run() {
 								// ts.AudioTracks[0].Push(uint32(tsPesPkt.PesPkt.Header.Pts/90), payload)
 							}
 						} else {
-							at.Push(uint32(tsPesPkt.PesPkt.Header.Pts/90), payload[7:])
+							at.Push(uint32(tsPesPkt.PesPkt.Header.Dts/90), payload[7:])
 						}
 						data = data[frameLen:remainLen]
 						remainLen = remainLen - frameLen
@@ -129,7 +129,7 @@ func (ts *TS) run() {
 					if ts.lastDts == 0 {
 						ts.lastDts = dts
 					}
-					//	compostionTime := uint32((pts - dts) / 90)
+					compostionTime := uint32((pts - dts) / 90)
 					t1 := time.Now()
 					duration := time.Millisecond * time.Duration((dts-ts.lastDts)/90)
 					ts.lastDts = dts
@@ -146,7 +146,7 @@ func (ts *TS) run() {
 						if vl == 0 {
 							continue
 						}
-						vt.Push(uint32(dts/90), v)
+						vt.Push(VideoPack{Timestamp: uint32(dts / 90), CompositionTime: compostionTime, Payload: v})
 					}
 					if vt.RtmpTag != nil && ts.OriginVideoTrack == nil {
 						vt.CodecID = 7
