@@ -33,8 +33,8 @@ func init() {
 			},
 		},
 		Run: func() {
-			http.HandleFunc("/ts/list", listTsDir)
-			http.HandleFunc("/ts/publish", publishTsDir)
+			http.HandleFunc("/api/ts/list", listTsDir)
+			http.HandleFunc("/api/ts/publish", publishTsDir)
 			AddHook(HOOK_SUBSCRIBE, func(x interface{}) {
 				s := x.(*Subscriber)
 				if config.AutoPublish && s.Publisher == nil {
