@@ -99,7 +99,7 @@ func (ts *TS) run() {
 								//将ADTS转换成ASC
 								at.SoundFormat = 10
 								at.SoundRate = codec.SamplingFrequencies[(payload[2]&0x3c)>>2]
-								at.SoundType = ((payload[2] & 0x1) << 2) | ((payload[3] & 0xc0) >> 6)
+								at.Channels = ((payload[2] & 0x1) << 2) | ((payload[3] & 0xc0) >> 6)
 								at.RtmpTag = codec.ADTSToAudioSpecificConfig(payload)
 								at.Push(uint32(tsPesPkt.PesPkt.Header.Dts/90), payload[7:])
 								ts.SetOriginAT(at)
