@@ -2,6 +2,7 @@ package ts
 
 import (
 	"bytes"
+	"embed"
 	"encoding/json"
 	"io/ioutil"
 	"log"
@@ -17,6 +18,10 @@ import (
 	"github.com/Monibuca/engine/v2/util"
 )
 
+//go:embed ui/*
+//go:embed README.md
+var ui embed.FS
+
 var config = struct {
 	BufferLength int
 	Path         string
@@ -28,6 +33,7 @@ func init() {
 		Name:   "TS",
 		Type:   PLUGIN_PUBLISHER,
 		Config: &config,
+		UIFile: &ui,
 		HotConfig: map[string]func(interface{}){
 			"AutoPublish": func(value interface{}) {
 				config.AutoPublish = value.(bool)
