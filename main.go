@@ -2,6 +2,7 @@ package ts
 
 import (
 	"bytes"
+	"embed"
 	"encoding/json"
 	"io/ioutil"
 	"log"
@@ -16,6 +17,10 @@ import (
 	"github.com/Monibuca/engine/v2/avformat/mpegts"
 	"github.com/Monibuca/engine/v2/util"
 )
+
+//go:embed ui/*
+//go:embed README.md
+var ui embed.FS
 
 var config = struct {
 	BufferLength int
@@ -42,7 +47,7 @@ func init() {
 
 			http.HandleFunc("/ts/list", listTsDir)
 			http.HandleFunc("/ts/publish", publishTsDir)
-		},
+		}, UIFile: &ui,
 	})
 }
 
@@ -76,7 +81,7 @@ func (ts *TS) run() {
 	spsHead := []byte{0xE1, 0, 0}
 	ppsHead := []byte{0x01, 0, 0}
 	nalLength := []byte{0, 0, 0, 0}
-	defer func(){
+	defer func() {
 		ts.AVRing.Done()
 	}()
 	for {
