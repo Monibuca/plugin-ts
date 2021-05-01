@@ -81,9 +81,6 @@ func (ts *TS) run() {
 	spsHead := []byte{0xE1, 0, 0}
 	ppsHead := []byte{0x01, 0, 0}
 	nalLength := []byte{0, 0, 0, 0}
-	defer func() {
-		ts.AVRing.Done()
-	}()
 	for {
 		select {
 		case <-ts.Done():
@@ -135,7 +132,7 @@ func (ts *TS) run() {
 					r := bytes.NewBuffer([]byte{})
 					for _, v := range nalus {
 						vl := len(v)
-						if vl == 0 {
+						if vl < 2 {
 							continue
 						}
 						isFirst := v[1]&0x80 == 0x80 //第一个分片
