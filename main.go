@@ -1,7 +1,6 @@
 package ts
 
 import (
-	"bytes"
 	"encoding/json"
 	"io/ioutil"
 	"log"
@@ -11,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Monibuca/engine/v3"
 	. "github.com/Monibuca/engine/v3"
 	"github.com/Monibuca/utils/v3"
 	"github.com/Monibuca/utils/v3/codec"
@@ -20,27 +20,27 @@ import (
 var config = struct {
 	BufferLength int
 	Path         string
-	AutoPublish  bool
-}{2048, "ts", true}
+	// AutoPublish  bool
+}{2048, "ts"}
 
 func init() {
 	InstallPlugin(&PluginConfig{
 		Name:   "TS",
 		Config: &config,
-		HotConfig: map[string]func(interface{}){
-			"AutoPublish": func(value interface{}) {
-				config.AutoPublish = value.(bool)
-			},
-		},
+		// HotConfig: map[string]func(interface{}){
+		// 	"AutoPublish": func(value interface{}) {
+		// 		config.AutoPublish = value.(bool)
+		// 	},
+		// },
 		Run: func() {
 			http.HandleFunc("/api/ts/list", listTsDir)
 			http.HandleFunc("/api/ts/publish", publishTsDir)
-			AddHook(HOOK_SUBSCRIBE, func(x interface{}) {
-				s := x.(*Subscriber)
-				if config.AutoPublish && s.Publisher == nil {
-					new(TS).PublishDir(s.StreamPath)
-				}
-			})
+			// AddHook(HOOK_SUBSCRIBE, func(x interface{}) {
+			// 	s := x.(*Subscriber)
+			// 	if config.AutoPublish && s.Publisher == nil {
+			// 		new(TS).PublishDir(s.StreamPath)
+			// 	}
+			// })
 		},
 	})
 }
@@ -51,7 +51,7 @@ type TSDir struct {
 	TotalSize  int64
 }
 type TS struct {
-	Publisher
+	*Stream
 	*mpegts.MpegTsStream `json:"-"`
 	TotalPesCount        int
 	IsSplitFrame         bool
@@ -66,17 +66,11 @@ func (ts *TS) run() {
 	//defer close(ts.TsChan)
 	totalBuffer := cap(ts.TsPesPktChan)
 	var at *AudioTrack
-	vt := NewVideoTrack()
-	needClose := true
-	defer func() {
-		if needClose {
-			ts.Close()
-		}
-	}()
+	vt := ts.NewVideoTrack(7)
+	defer ts.Close()
 	for {
 		select {
 		case <-ts.Done():
-			needClose = false
 			return
 		case tsPesPkt, ok := <-ts.TsPesPktChan:
 			ts.BufferLength = len(ts.TsPesPktChan)
@@ -95,14 +89,12 @@ func (ts *TS) run() {
 						payload := data[:frameLen]
 						if at == nil {
 							if payload[0] == 0xFF && (payload[1]&0xF0) == 0xF0 {
-								at = NewAudioTrack()
+								at = ts.NewAudioTrack(10)
 								//将ADTS转换成ASC
-								at.SoundFormat = 10
 								at.SoundRate = codec.SamplingFrequencies[(payload[2]&0x3c)>>2]
 								at.Channels = ((payload[2] & 0x1) << 2) | ((payload[3] & 0xc0) >> 6)
-								at.RtmpTag = codec.ADTSToAudioSpecificConfig(payload)
-								at.Push(uint32(tsPesPkt.PesPkt.Header.Dts/90), payload[7:])
-								ts.SetOriginAT(at)
+								at.ExtraData = codec.ADTSToAudioSpecificConfig(payload)
+								at.PushRaw(engine.AudioPack{Timestamp: uint32(tsPesPkt.PesPkt.Header.Dts / 90), Raw: payload[7:]})
 							} else {
 								utils.Println("audio codec not support yet,want aac")
 								return
@@ -110,7 +102,7 @@ func (ts *TS) run() {
 								// ts.AudioTracks[0].Push(uint32(tsPesPkt.PesPkt.Header.Pts/90), payload)
 							}
 						} else {
-							at.Push(uint32(tsPesPkt.PesPkt.Header.Dts/90), payload[7:])
+							at.PushRaw(engine.AudioPack{Timestamp: uint32(tsPesPkt.PesPkt.Header.Dts / 90), Raw: payload[7:]})
 						}
 						data = data[frameLen:remainLen]
 						remainLen = remainLen - frameLen
@@ -133,25 +125,7 @@ func (ts *TS) run() {
 					t1 := time.Now()
 					duration := time.Millisecond * time.Duration((dts-ts.lastDts)/90)
 					ts.lastDts = dts
-					nalus0 := bytes.SplitN(tsPesPkt.PesPkt.Payload, codec.NALU_Delimiter2, -1)
-					nalus := make([][]byte, 0)
-					for _, v := range nalus0 {
-						if len(v) == 0 {
-							continue
-						}
-						nalus = append(nalus, bytes.SplitN(v, codec.NALU_Delimiter1, -1)...)
-					}
-					for _, v := range nalus {
-						vl := len(v)
-						if vl == 0 {
-							continue
-						}
-						vt.Push(VideoPack{Timestamp: uint32(dts / 90), CompositionTime: compostionTime, Payload: v})
-					}
-					if vt.RtmpTag != nil && ts.OriginVideoTrack == nil {
-						vt.CodecID = 7
-						ts.SetOriginVT(vt)
-					}
+					vt.PushAnnexB(VideoPack{Timestamp: uint32(dts / 90), CompositionTime: compostionTime, Payload: tsPesPkt.PesPkt.Payload})
 					if utils.MayBeError(err) {
 						return
 					}
@@ -176,8 +150,11 @@ func (ts *TS) run() {
 	}
 }
 func (ts *TS) Publish(streamPath string) (result bool) {
-	if result = ts.Publisher.Publish(streamPath); result {
-		ts.Type = "TS"
+	ts.Stream = &Stream{
+		StreamPath: streamPath,
+		Type:       "TS",
+	}
+	if result = ts.Stream.Publish(); result {
 		ts.MpegTsStream = mpegts.NewMpegTsStream(config.BufferLength)
 		go ts.run()
 	}
@@ -189,7 +166,11 @@ func (ts *TS) PublishDir(streamPath string) {
 	if err != nil || len(files) == 0 {
 		return
 	}
-	if ts.Publisher.Publish(strings.ReplaceAll(streamPath, "\\", "/")) {
+	ts.Stream = &Stream{
+		StreamPath: strings.ReplaceAll(streamPath, "\\", "/"),
+		Type:       "TSFiles",
+	}
+	if ts.Stream.Publish() {
 		ts.Type = "TSFiles"
 		ts.MpegTsStream = mpegts.NewMpegTsStream(0)
 		go ts.run()
