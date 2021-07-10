@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Monibuca/engine/v3"
 	. "github.com/Monibuca/engine/v3"
 	"github.com/Monibuca/utils/v3"
 	"github.com/Monibuca/utils/v3/codec"
@@ -94,7 +93,7 @@ func (ts *TS) run() {
 								at.SoundRate = codec.SamplingFrequencies[(payload[2]&0x3c)>>2]
 								at.Channels = ((payload[2] & 0x1) << 2) | ((payload[3] & 0xc0) >> 6)
 								at.ExtraData = codec.ADTSToAudioSpecificConfig(payload)
-								at.PushRaw(engine.AudioPack{Timestamp: uint32(tsPesPkt.PesPkt.Header.Dts / 90), Raw: payload[7:]})
+								at.PushRaw(uint32(tsPesPkt.PesPkt.Header.Dts/90), payload[7:])
 							} else {
 								utils.Println("audio codec not support yet,want aac")
 								return
@@ -102,7 +101,7 @@ func (ts *TS) run() {
 								// ts.AudioTracks[0].Push(uint32(tsPesPkt.PesPkt.Header.Pts/90), payload)
 							}
 						} else {
-							at.PushRaw(engine.AudioPack{Timestamp: uint32(tsPesPkt.PesPkt.Header.Dts / 90), Raw: payload[7:]})
+							at.PushRaw(uint32(tsPesPkt.PesPkt.Header.Dts/90), payload[7:])
 						}
 						data = data[frameLen:remainLen]
 						remainLen = remainLen - frameLen
@@ -121,11 +120,10 @@ func (ts *TS) run() {
 					if ts.lastDts == 0 {
 						ts.lastDts = dts
 					}
-					compostionTime := uint32((pts - dts) / 90)
 					t1 := time.Now()
 					duration := time.Millisecond * time.Duration((dts-ts.lastDts)/90)
 					ts.lastDts = dts
-					vt.PushAnnexB(VideoPack{Timestamp: uint32(dts / 90), CompositionTime: compostionTime, Payload: tsPesPkt.PesPkt.Payload})
+					vt.PushAnnexB(uint32(dts/90), uint32((pts/90 - dts/90)), tsPesPkt.PesPkt.Payload)
 					if utils.MayBeError(err) {
 						return
 					}
