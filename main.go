@@ -100,7 +100,7 @@ func (ts *TS) run() {
 								// ts.AudioTracks[0].SoundFormat = 2
 								// ts.AudioTracks[0].Push(uint32(tsPesPkt.PesPkt.Header.Pts/90), payload)
 							}
-						} else {
+						} else if len(payload) > 7 {
 							at.PushRaw(uint32(tsPesPkt.PesPkt.Header.Dts/90), payload[7:])
 						}
 						data = data[frameLen:remainLen]
