@@ -19,29 +19,16 @@ import (
 var config = struct {
 	BufferLength int
 	Path         string
-	// AutoPublish  bool
 }{2048, "ts"}
 
 func init() {
-	InstallPlugin(&PluginConfig{
+	pc := PluginConfig{
 		Name:   "TS",
 		Config: &config,
-		// HotConfig: map[string]func(interface{}){
-		// 	"AutoPublish": func(value interface{}) {
-		// 		config.AutoPublish = value.(bool)
-		// 	},
-		// },
-		Run: func() {
-			http.HandleFunc("/api/ts/list", listTsDir)
-			http.HandleFunc("/api/ts/publish", publishTsDir)
-			// AddHook(HOOK_SUBSCRIBE, func(x interface{}) {
-			// 	s := x.(*Subscriber)
-			// 	if config.AutoPublish && s.Publisher == nil {
-			// 		new(TS).PublishDir(s.StreamPath)
-			// 	}
-			// })
-		},
-	})
+	}
+	pc.Install(nil)
+	http.HandleFunc("/api/ts/list", listTsDir)
+	http.HandleFunc("/api/ts/publish", publishTsDir)
 }
 
 type TSDir struct {
