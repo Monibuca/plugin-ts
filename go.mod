@@ -1,8 +1,7 @@
-module github.com/Monibuca/plugin-ts/v3
+module github.com/Monibuca/plugin-ts/v4
 
-go 1.13
+go 1.18
 
 require (
-	github.com/Monibuca/engine/v3 v3.4.5
-	github.com/Monibuca/utils/v3 v3.0.5
+	github.com/asticode/go-astits v1.10.0 // indirect
 )

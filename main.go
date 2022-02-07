@@ -1,34 +1,27 @@
 package ts
 
 import (
-	"encoding/json"
-	"io/ioutil"
-	"log"
-	"net/http"
-	"os"
-	"path/filepath"
-	"strings"
-	"time"
+	"io"
 
-	. "github.com/Monibuca/engine/v3"
+	. "github.com/Monibuca/engine/v4"
+	"github.com/Monibuca/engine/v4/track"
 	"github.com/Monibuca/utils/v3"
-	"github.com/Monibuca/utils/v3/codec"
-	"github.com/Monibuca/utils/v3/codec/mpegts"
+	astits "github.com/asticode/go-astits"
 )
 
-var config = struct {
-	BufferLength int
-	Path         string
-}{2048, "ts"}
+type TSConfig struct {
+}
+
+func (config *TSConfig) Update(override Config) {
+	override.Unmarshal(config)
+
+}
 
 func init() {
-	pc := PluginConfig{
-		Name:   "TS",
-		Config: &config,
-	}
-	pc.Install(nil)
-	http.HandleFunc("/api/ts/list", listTsDir)
-	http.HandleFunc("/api/ts/publish", publishTsDir)
+	var config TSConfig
+	InstallPlugin(&config)
+	// http.HandleFunc("/api/ts/list", listTsDir)
+	// http.HandleFunc("/api/ts/publish", publishTsDir)
 }
 
 type TSDir struct {
@@ -37,174 +30,118 @@ type TSDir struct {
 	TotalSize  int64
 }
 type TS struct {
-	*Stream
-	*mpegts.MpegTsStream `json:"-"`
-	TotalPesCount        int
-	IsSplitFrame         bool
-	PTS                  uint64
-	DTS                  uint64
-	PesCount             int
-	BufferLength         int //TsChan     chan io.Reader
-	lastDts              uint64
+	Publisher
+	io.ReadCloser
+	*astits.Demuxer
+	TotalPesCount int
+	IsSplitFrame  bool
+	PTS           uint64
+	DTS           uint64
+	PesCount      int
+	BufferLength  int //TsChan     chan io.Reader
+	lastDts       uint64
 }
 
-func (ts *TS) run() {
-	//defer close(ts.TsChan)
-	totalBuffer := cap(ts.TsPesPktChan)
-	var at *AudioTrack
-	vt := ts.NewVideoTrack(7)
-	defer ts.Close()
+func (ts *TS) Close() {
+	ts.ReadCloser.Close()
+}
+
+func (ts *TS) Feed(source io.ReadCloser) {
+	ts.ReadCloser = source
+	ts.Demuxer = astits.NewDemuxer(ts, source)
+	var at *track.Audio
+	var vt *track.Video
 	for {
-		select {
-		case <-ts.Done():
+		d, err := ts.NextData()
+		if err != nil {
 			return
-		case tsPesPkt, ok := <-ts.TsPesPktChan:
-			ts.BufferLength = len(ts.TsPesPktChan)
-			if ok {
-				ts.TotalPesCount++
-				switch tsPesPkt.PesPkt.Header.StreamID & 0xF0 {
-				case mpegts.STREAM_ID_AUDIO:
-					data := tsPesPkt.PesPkt.Payload
-					for remainLen := len(data); remainLen > 0; {
-						// AACFrameLength(13)
-						// xx xxxxxxxx xxx
-						frameLen := (int(data[3]&3) << 11) | (int(data[4]) << 3) | (int(data[5]) >> 5)
-						if frameLen > remainLen {
-							break
-						}
-						payload := data[:frameLen]
-						if at == nil {
-							if payload[0] == 0xFF && (payload[1]&0xF0) == 0xF0 {
-								at = ts.NewAudioTrack(10)
-								//将ADTS转换成ASC
-								at.SoundRate = codec.SamplingFrequencies[(payload[2]&0x3c)>>2]
-								at.Channels = ((payload[2] & 0x1) << 2) | ((payload[3] & 0xc0) >> 6)
-								at.ExtraData = codec.ADTSToAudioSpecificConfig(payload)
-								at.PushRaw(uint32(tsPesPkt.PesPkt.Header.Dts/90), payload[7:])
-							} else {
-								utils.Println("audio codec not support yet,want aac")
-								return
-								// ts.AudioTracks[0].SoundFormat = 2
-								// ts.AudioTracks[0].Push(uint32(tsPesPkt.PesPkt.Header.Pts/90), payload)
-							}
-						} else if len(payload) > 7 {
-							at.PushRaw(uint32(tsPesPkt.PesPkt.Header.Dts/90), payload[7:])
-						}
-						data = data[frameLen:remainLen]
-						remainLen = remainLen - frameLen
+		}
+		if d.PMT != nil {
+			// Loop through elementary streams
+			for _, es := range d.PMT.ElementaryStreams {
+				switch es.StreamType {
+				case astits.StreamTypeH264Video:
+					vt = (*track.Video)(ts.NewH264Track())
+				case astits.StreamTypeH265Video:
+					vt = (*track.Video)(ts.NewH265Track())
+				case astits.StreamTypeAACAudio:
+					at = (*track.Audio)(ts.NewAACTrack())
+				}
+			}
+		}
+		if d.PES != nil {
+			if d.PES.Header.IsVideoStream() {
+				vt.WriteAnnexB(uint32(d.PES.Header.OptionalHeader.PTS.Base), uint32(d.PES.Header.OptionalHeader.DTS.Base), d.PES.Data)
+			} else {
+				data := d.PES.Data
+				at.Value.PTS = uint32(d.PES.Header.OptionalHeader.PTS.Base)
+				at.Value.DTS = uint32(d.PES.Header.OptionalHeader.DTS.Base)
+				for remainLen := len(data); remainLen > 0; {
+					// AACFrameLength(13)
+					// xx xxxxxxxx xxx
+					frameLen := (int(data[3]&3) << 11) | (int(data[4]) << 3) | (int(data[5]) >> 5)
+					if frameLen > remainLen {
+						break
 					}
-
-				case mpegts.STREAM_ID_VIDEO:
-					var err error
-					ts.PTS = tsPesPkt.PesPkt.Header.Pts
-					ts.DTS = tsPesPkt.PesPkt.Header.Dts
-					lastDts := ts.lastDts
-					dts := ts.DTS
-					pts := ts.PTS
-					if dts == 0 {
-						dts = pts
-					}
-					if ts.lastDts == 0 {
-						ts.lastDts = dts
-					}
-					t1 := time.Now()
-					duration := time.Millisecond * time.Duration((dts-ts.lastDts)/90)
-					ts.lastDts = dts
-					vt.PushAnnexB(uint32(dts/90), uint32((pts/90 - dts/90)), tsPesPkt.PesPkt.Payload)
-					if utils.MayBeError(err) {
-						return
-					}
-					t2 := time.Since(t1)
-					if duration != 0 && t2 < duration {
-						if duration < time.Second {
-							//if ts.BufferLength > 50 {
-							duration = duration - t2
-							//}
-							if ts.BufferLength > 300 {
-								duration = duration - duration*time.Duration(ts.BufferLength)/time.Duration(totalBuffer)
-							}
-							time.Sleep(duration)
+					payload := data[:frameLen]
+					if at.DecoderConfiguration.AVCC == nil {
+						if payload[0] == 0xFF && (payload[1]&0xF0) == 0xF0 {
+							//将ADTS转换成ASC
+							at.WriteADTS(payload[:7])
+							at.WriteSlice(payload[7:])
+							at.Flush()
 						} else {
-							time.Sleep(time.Millisecond * 20)
-							log.Printf("stream:%s,duration:%d,dts:%d,lastDts:%d\n", ts.StreamPath, duration/time.Millisecond, tsPesPkt.PesPkt.Header.Dts, lastDts)
+							utils.Println("audio codec not support yet,want aac")
+							return
+							// ts.AudioTracks[0].SoundFormat = 2
+							// ts.AudioTracks[0].Push(uint32(tsPesPkt.PesPkt.Header.Pts/90), payload)
 						}
+					} else if len(payload) > 7 {
+						at.WriteSlice(payload[7:])
+						at.Flush()
 					}
+					data = data[frameLen:remainLen]
+					remainLen -= frameLen
 				}
 			}
 		}
 	}
 }
-func (ts *TS) Publish(streamPath string) (result bool) {
-	ts.Stream = &Stream{
-		StreamPath: streamPath,
-		Type:       "TS",
-	}
-	if result = ts.Stream.Publish(); result {
-		ts.MpegTsStream = mpegts.NewMpegTsStream(config.BufferLength)
-		go ts.run()
-	}
-	return
-}
-func (ts *TS) PublishDir(streamPath string) {
-	dirPath := filepath.Join(config.Path, streamPath)
-	files, err := ioutil.ReadDir(dirPath)
-	if err != nil || len(files) == 0 {
-		return
-	}
-	ts.Stream = &Stream{
-		StreamPath: strings.ReplaceAll(streamPath, "\\", "/"),
-		Type:       "TSFiles",
-	}
-	if ts.Stream.Publish() {
-		ts.Type = "TSFiles"
-		ts.MpegTsStream = mpegts.NewMpegTsStream(0)
-		go ts.run()
-		for _, file := range files {
-			fullPath := filepath.Join(dirPath, file.Name())
-			if filepath.Ext(fullPath) == ".ts" {
-				if data, err := os.Open(fullPath); err == nil {
-					ts.Feed(data)
-					data.Close()
-				}
-			}
-		}
-		ts.Close()
-	}
-}
-func publishTsDir(w http.ResponseWriter, r *http.Request) {
-	streamPath := r.URL.Query().Get("streamPath")
-	go new(TS).PublishDir(streamPath)
-}
-func readTsDir(currentDir string) []*TSDir {
-	var list []*TSDir
-	abDir := filepath.Join(config.Path, currentDir)
-	if items, err := ioutil.ReadDir(abDir); err == nil {
-		tscount := 0
-		var totalSize int64
-		for _, file := range items {
-			if file.IsDir() {
-				list = append(list, readTsDir(filepath.Join(currentDir, file.Name()))...)
-			} else if filepath.Ext(filepath.Join(abDir, file.Name())) == ".ts" {
-				tscount++
-				totalSize = totalSize + file.Size()
-			}
-		}
-		if tscount > 0 {
-			info := TSDir{
-				currentDir, tscount, totalSize,
-			}
-			list = append(list, &info)
-		}
-	}
-	return list
-}
-func listTsDir(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	var list []*TSDir = readTsDir(".")
-	bytes, err := json.Marshal(list)
-	if err == nil {
-		w.Write(bytes)
-	} else {
-		w.Write([]byte("{\"code\":1}"))
-	}
-}
+
+// func publishTsDir(w http.ResponseWriter, r *http.Request) {
+// 	streamPath := r.URL.Query().Get("streamPath")
+// 	go new(TS).PublishDir(streamPath)
+// }
+// func readTsDir(currentDir string) []*TSDir {
+// 	var list []*TSDir
+// 	abDir := filepath.Join(config.Path, currentDir)
+// 	if items, err := ioutil.ReadDir(abDir); err == nil {
+// 		tscount := 0
+// 		var totalSize int64
+// 		for _, file := range items {
+// 			if file.IsDir() {
+// 				list = append(list, readTsDir(filepath.Join(currentDir, file.Name()))...)
+// 			} else if filepath.Ext(filepath.Join(abDir, file.Name())) == ".ts" {
+// 				tscount++
+// 				totalSize = totalSize + file.Size()
+// 			}
+// 		}
+// 		if tscount > 0 {
+// 			info := TSDir{
+// 				currentDir, tscount, totalSize,
+// 			}
+// 			list = append(list, &info)
+// 		}
+// 	}
+// 	return list
+// }
+// func listTsDir(w http.ResponseWriter, r *http.Request) {
+// 	w.Header().Set("Access-Control-Allow-Origin", "*")
+// 	var list []*TSDir = readTsDir(".")
+// 	bytes, err := json.Marshal(list)
+// 	if err == nil {
+// 		w.Write(bytes)
+// 	} else {
+// 		w.Write([]byte("{\"code\":1}"))
+// 	}
+// }
