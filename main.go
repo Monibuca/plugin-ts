@@ -1,81 +1,62 @@
 package ts
 
 import (
-	"io"
-
 	. "github.com/Monibuca/engine/v4"
+	"github.com/Monibuca/engine/v4/config"
 	"github.com/Monibuca/engine/v4/track"
-	"github.com/Monibuca/utils/v3"
 	astits "github.com/asticode/go-astits"
 )
 
 type TSConfig struct {
 }
 
-func (config *TSConfig) Update(override Config) {
-	override.Unmarshal(config)
-
+func (config *TSConfig) Update(override config.Config) {
 }
 
-func init() {
-	var config TSConfig
-	InstallPlugin(&config)
-	// http.HandleFunc("/api/ts/list", listTsDir)
-	// http.HandleFunc("/api/ts/publish", publishTsDir)
-}
+var plugin = InstallPlugin(&TSConfig{})
 
 type TSDir struct {
 	StreamPath string
 	TsCount    int
 	TotalSize  int64
 }
-type TS struct {
-	Publisher
-	io.ReadCloser
-	*astits.Demuxer
-	TotalPesCount int
-	IsSplitFrame  bool
-	PTS           uint64
-	DTS           uint64
-	PesCount      int
-	BufferLength  int //TsChan     chan io.Reader
-	lastDts       uint64
+type TSPuller struct {
+	Puller
+	PesCount int
+	at       *track.Audio
+	vt       *track.Video
 }
 
-func (ts *TS) Close() {
-	ts.ReadCloser.Close()
-}
-
-func (ts *TS) Feed(source io.ReadCloser) {
-	ts.ReadCloser = source
-	ts.Demuxer = astits.NewDemuxer(ts, source)
-	var at *track.Audio
-	var vt *track.Video
-	for {
-		d, err := ts.NextData()
-		if err != nil {
-			return
-		}
-		if d.PMT != nil {
+func (ts *TSPuller) Pull() {
+	demuxer := astits.NewDemuxer(ts, ts)
+	for d, err := demuxer.NextData(); err == nil; d, err = demuxer.NextData() {
+		if d.PMT != nil && (ts.vt == nil || ts.at == nil) {
 			// Loop through elementary streams
 			for _, es := range d.PMT.ElementaryStreams {
 				switch es.StreamType {
 				case astits.StreamTypeH264Video:
-					vt = (*track.Video)(ts.NewH264Track())
+					if ts.vt == nil {
+						ts.vt = (*track.Video)(ts.NewH264Track())
+					}
 				case astits.StreamTypeH265Video:
-					vt = (*track.Video)(ts.NewH265Track())
+					if ts.vt == nil {
+						ts.vt = (*track.Video)(ts.NewH265Track())
+					}
 				case astits.StreamTypeAACAudio:
-					at = (*track.Audio)(ts.NewAACTrack())
+					if ts.at == nil {
+						ts.at = (*track.Audio)(ts.NewAACTrack())
+					}
 				}
 			}
 		}
 		if d.PES != nil {
+			ts.PesCount++
 			if d.PES.Header.IsVideoStream() {
-				vt.WriteAnnexB(uint32(d.PES.Header.OptionalHeader.PTS.Base), uint32(d.PES.Header.OptionalHeader.DTS.Base), d.PES.Data)
+				ts.vt.WriteAnnexB(uint32(d.PES.Header.OptionalHeader.PTS.Base), uint32(d.PES.Header.OptionalHeader.DTS.Base), d.PES.Data)
 			} else {
 				data := d.PES.Data
-				at.Value.PTS = uint32(d.PES.Header.OptionalHeader.PTS.Base)
-				at.Value.DTS = uint32(d.PES.Header.OptionalHeader.DTS.Base)
+				ts.at.Value.PTS = uint32(d.PES.Header.OptionalHeader.PTS.Base)
+				ts.at.Value.DTS = uint32(d.PES.Header.OptionalHeader.DTS.Base)
 				for remainLen := len(data); remainLen > 0; {
 					// AACFrameLength(13)
 					// xx xxxxxxxx xxx
@@ -84,21 +65,21 @@ func (ts *TS) Feed(source io.ReadCloser) {
 						break
 					}
 					payload := data[:frameLen]
-					if at.DecoderConfiguration.AVCC == nil {
+					if ts.at.DecoderConfiguration.AVCC == nil {
 						if payload[0] == 0xFF && (payload[1]&0xF0) == 0xF0 {
 							//将ADTS转换成ASC
-							at.WriteADTS(payload[:7])
-							at.WriteSlice(payload[7:])
-							at.Flush()
+							ts.at.WriteADTS(payload[:7])
+							ts.at.WriteSlice(payload[7:])
+							ts.at.Flush()
 						} else {
-							utils.Println("audio codec not support yet,want aac")
-							return
+							plugin.Println("audio codec not support yet,want aac")
+							continue
 							// ts.AudioTracks[0].SoundFormat = 2
 							// ts.AudioTracks[0].Push(uint32(tsPesPkt.PesPkt.Header.Pts/90), payload)
 						}
 					} else if len(payload) > 7 {
-						at.WriteSlice(payload[7:])
-						at.Flush()
+						ts.at.WriteSlice(payload[7:])
+						ts.at.Flush()
 					}
 					data = data[frameLen:remainLen]
 					remainLen -= frameLen
