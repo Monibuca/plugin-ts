@@ -2,9 +2,9 @@ package ts
 
 import (
 	. "github.com/Monibuca/engine/v4"
+	. "github.com/Monibuca/engine/v4/common"
 	"github.com/Monibuca/engine/v4/config"
-	"github.com/Monibuca/engine/v4/track"
-	astits "github.com/asticode/go-astits"
+	"github.com/asticode/go-astits"
 )
 
 type TSConfig struct {
@@ -23,8 +23,8 @@ type TSDir struct {
 type TSPuller struct {
 	Puller
 	PesCount int
-	at       *track.Audio
-	vt       *track.Video
+	at       AudioTrack
+	vt       VideoTrack
 }
 
 func (ts *TSPuller) Pull() {
@@ -36,15 +36,15 @@ func (ts *TSPuller) Pull() {
 				switch es.StreamType {
 				case astits.StreamTypeH264Video:
 					if ts.vt == nil {
-						ts.vt = (*track.Video)(ts.NewH264Track())
+						ts.vt = ts.NewH264Track()
 					}
 				case astits.StreamTypeH265Video:
 					if ts.vt == nil {
-						ts.vt = (*track.Video)(ts.NewH265Track())
+						ts.vt = ts.NewH265Track()
 					}
 				case astits.StreamTypeAACAudio:
 					if ts.at == nil {
-						ts.at = (*track.Audio)(ts.NewAACTrack())
+						ts.at = ts.NewAACTrack()
 					}
 				}
 			}
@@ -55,8 +55,8 @@ func (ts *TSPuller) Pull() {
 				ts.vt.WriteAnnexB(uint32(d.PES.Header.OptionalHeader.PTS.Base), uint32(d.PES.Header.OptionalHeader.DTS.Base), d.PES.Data)
 			} else {
 				data := d.PES.Data
-				ts.at.Value.PTS = uint32(d.PES.Header.OptionalHeader.PTS.Base)
-				ts.at.Value.DTS = uint32(d.PES.Header.OptionalHeader.DTS.Base)
+				ts.at.CurrentFrame().PTS = uint32(d.PES.Header.OptionalHeader.PTS.Base)
+				ts.at.CurrentFrame().DTS = uint32(d.PES.Header.OptionalHeader.DTS.Base)
 				for remainLen := len(data); remainLen > 0; {
 					// AACFrameLength(13)
 					// xx xxxxxxxx xxx
@@ -65,14 +65,14 @@ func (ts *TSPuller) Pull() {
 						break
 					}
 					payload := data[:frameLen]
-					if ts.at.DecoderConfiguration.AVCC == nil {
+					if ts.at.GetDecoderConfiguration().AVCC == nil {
 						if payload[0] == 0xFF && (payload[1]&0xF0) == 0xF0 {
 							//将ADTS转换成ASC
 							ts.at.WriteADTS(payload[:7])
 							ts.at.WriteSlice(payload[7:])
 							ts.at.Flush()
 						} else {
-							plugin.Println("audio codec not support yet,want aac")
+							plugin.Warn("audio codec not support yet,want aac")
 							continue
 							// ts.AudioTracks[0].SoundFormat = 2
 							// ts.AudioTracks[0].Push(uint32(tsPesPkt.PesPkt.Header.Pts/90), payload)
