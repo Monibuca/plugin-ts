@@ -2,7 +2,6 @@ package ts
 
 import (
 	. "github.com/Monibuca/engine/v4"
-	"github.com/Monibuca/engine/v4/config"
 	"github.com/Monibuca/engine/v4/track"
 	"github.com/asticode/go-astits"
 )
@@ -10,7 +9,7 @@ import (
 type TSConfig struct {
 }
 
-func (config *TSConfig) Update(override config.Config) {
+func (config *TSConfig) OnEvent(event any) {
 }
 
 var plugin = InstallPlugin(&TSConfig{})
