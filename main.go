@@ -1,9 +1,9 @@
 package ts
 
 import (
-	. "github.com/Monibuca/engine/v4"
-	"github.com/Monibuca/engine/v4/track"
 	"github.com/asticode/go-astits"
+	. "m7s.live/engine/v4"
+	"m7s.live/engine/v4/track"
 )
 
 type TSConfig struct {
