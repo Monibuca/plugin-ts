@@ -33,6 +33,7 @@ func init() {
 		Name:   "TS",
 		Type:   PLUGIN_PUBLISHER,
 		Config: &config,
+		UIFile: &ui,
 		HotConfig: map[string]func(interface{}){
 			"AutoPublish": func(value interface{}) {
 				config.AutoPublish = value.(bool)
